@@ -77,9 +77,9 @@ def render_stock_card(code, name, data, fmt_date_fn, volume_unit="株"):
         col1, col2 = st.columns(2)
         with col1:
             st.write(f"始値： **{data['open']}**円")
-            st.write(f"安値： **{data['low']}**円")
-        with col2:
             st.write(f"高値： **{data['high']}**円")
+        with col2:
+            st.write(f"安値： **{data['low']}**円")
             st.write(f"終値： **{data['close']}**円")
         st.write(f"出来高： {data['volume']}{volume_unit}")
     else:
