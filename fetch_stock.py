@@ -118,3 +118,50 @@ def fmt_date_monthly(date_str):
     if len(date_str) == 5 and date_str[2] == '/':
         return "20" + date_str
     return date_str
+
+
+def fetch_3month_close(code, pages=3):
+    """
+    過去3ヶ月分の日足終値を取得。
+    株探の日足時系列ページを page=1〜pages までスクレイピング。
+    戻り値: (code, name, [ {"date": "20YY/MM/DD", "close": "1234"}, ... ])
+            データ取得失敗時は空リスト。
+    """
+    base_url = f"https://kabutan.jp/stock/kabuka?code={code}&ashi=day&page="
+    name = code
+    rows_all = []
+
+    for page in range(1, pages + 1):
+        url = base_url + str(page)
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            if page == 1:
+                name = _get_name(soup, code)
+
+            table = soup.select_one("table.stock_kabuka_dwm")
+            if not table:
+                break
+
+            for tr in table.find_all("tr")[1:]:  # 先頭はヘッダー行
+                cells = tr.find_all(["th", "td"])
+                if len(cells) < 5:
+                    continue
+                date_str = cells[0].get_text(strip=True)
+                close_str = cells[4].get_text(strip=True)
+                if not date_str or not close_str:
+                    continue
+                rows_all.append({
+                    "date":  fmt_date_daily(date_str),
+                    "close": close_str,
+                })
+
+        except Exception:
+            break
+
+        if page < pages:
+            time.sleep(1.0)
+
+    return code, name, rows_all

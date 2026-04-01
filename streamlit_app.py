@@ -10,6 +10,7 @@ from fetch_stock import (
     is_zaraba,
     fetch_stock_data,
     fetch_monthly_stock_data,
+    fetch_3month_close,
     fmt_date_daily,
     fmt_date_monthly,
 )
@@ -20,10 +21,24 @@ from fetch_stock import (
 st.set_page_config(page_title="株価チェッカー", page_icon="📈", layout="centered")
 st.title("📈 株価チェッカー")
 
+# 日足用銘柄リストのGoogleスプレッドシートCSVエクスポートURL
+DAILY_SHEET_CSV_URL = (
+    "https://docs.google.com/spreadsheets/d/"
+    "1i7mHdfkMreZ_ayoOMYTykBRyagA--0D_JSBCx5ZPjQY"
+    "/export?format=csv&gid=0"
+)
+
 # 月足用銘柄リストのGoogleスプレッドシートCSVエクスポートURL
 MONTHLY_SHEET_CSV_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "1OgR9IX86LYAiN1THdAtwkaBd1-kAfRX4wsxXI1BBgek"
+    "/export?format=csv&gid=0"
+)
+
+# 過去3ヶ月折れ線用銘柄リストのGoogleスプレッドシートCSVエクスポートURL
+THREEMONTH_SHEET_CSV_URL = (
+    "https://docs.google.com/spreadsheets/d/"
+    "1HJ-95gGC9p5jKC0bd_YdLoqNI55tM6W2aJD5Nu0RerU"
     "/export?format=csv&gid=0"
 )
 
@@ -32,21 +47,20 @@ MONTHLY_SHEET_CSV_URL = (
 # ---------------------------------------------------------------
 
 def load_daily_codes():
-    """stock_lists.csv から銘柄コードを読み込む"""
-    codes = []
+    """GoogleスプレッドシートのCSVエクスポートURLから銘柄コードを取得する"""
     try:
-        with open("stock_lists.csv", "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.replace("\t", ",").split(",")
-                code = parts[-1].strip()
-                if code:
-                    codes.append(code)
-    except FileNotFoundError:
-        st.error("stock_lists.csv が見つかりません。同じディレクトリに配置してください。")
-    return codes
+        resp = requests.get(DAILY_SHEET_CSV_URL, timeout=15)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text), header=None, dtype=str)
+        codes = []
+        for _, row in df.iterrows():
+            code = str(row.iloc[-1]).strip()
+            if code and code.lower() != "nan":
+                codes.append(code)
+        return codes
+    except Exception as e:
+        st.error(f"日足銘柄リストの取得に失敗しました: {e}")
+        return []
 
 
 def load_monthly_codes():
@@ -66,6 +80,23 @@ def load_monthly_codes():
         return codes
     except Exception as e:
         st.error(f"月足銘柄リストの取得に失敗しました: {e}")
+        return []
+
+
+def load_threemonth_codes():
+    """過去3ヶ月折れ線用の銘柄コードをスプレッドシートから取得する"""
+    try:
+        resp = requests.get(THREEMONTH_SHEET_CSV_URL, timeout=15)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text), header=None, dtype=str)
+        codes = []
+        for _, row in df.iterrows():
+            code = str(row.iloc[0]).strip()
+            if code and code.lower() != "nan":
+                codes.append(code)
+        return codes
+    except Exception as e:
+        st.error(f"銘柄リストの取得に失敗しました: {e}")
         return []
 
 
@@ -103,7 +134,7 @@ else:
 # ---------------------------------------------------------------
 # タブ切り替え
 # ---------------------------------------------------------------
-tab_daily, tab_monthly = st.tabs(["📅 日足", "📆 月足"])
+tab_daily, tab_monthly, tab_3month = st.tabs(["📅 日足(場帳)", "📆 月足", "📈 過去3ヶ月(折れ線用)"])
 
 # ===== 日足タブ =====
 with tab_daily:
@@ -123,6 +154,41 @@ with tab_daily:
             st.divider()
             for code, name, data in results:
                 render_stock_card(code, name, data, fmt_date_daily)
+
+# ===== 過去3ヶ月タブ =====
+with tab_3month:
+    st.subheader("過去3ヶ月　日足終値一覧")
+    st.caption("銘柄リスト：Googleスプレッドシートから自動取得")
+
+    if st.button("データを取得", type="primary", use_container_width=True, key="btn_3month"):
+        with st.spinner("銘柄リストを取得中..."):
+            codes = load_threemonth_codes()
+
+        if codes:
+            st.caption(f"銘柄数：{len(codes)} 件")
+            progress = st.progress(0, text="取得中...")
+            results = []
+            for i, code in enumerate(codes):
+                c, name, rows = fetch_3month_close(code, pages=3)
+                results.append((c, name, rows))
+                progress.progress((i + 1) / len(codes), text=f"取得中... {i+1}/{len(codes)}")
+                time.sleep(0.8)
+            progress.empty()
+
+            st.divider()
+            for code, name, rows in results:
+                st.markdown(f"**■ {code}：{name}**")
+                if rows:
+                    df = pd.DataFrame(rows, columns=["日付", "終値"])
+                    # 横幅を列に合わせてコンパクトに表示（横スクロールなし）
+                    st.dataframe(
+                        df,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.markdown("_データ取得失敗_")
+                st.divider()
 
 # ===== 月足タブ =====
 with tab_monthly:
