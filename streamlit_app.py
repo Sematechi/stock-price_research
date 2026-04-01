@@ -179,8 +179,7 @@ with tab_3month:
             for code, name, rows in results:
                 st.markdown(f"**■ {code}：{name}**")
                 if rows:
-                    df = pd.DataFrame(rows, columns=["日付", "終値"])
-                    # 横幅を列に合わせてコンパクトに表示（横スクロールなし）
+                    df = pd.DataFrame(rows).rename(columns={"date": "日付", "close": "終値"})
                     st.dataframe(
                         df,
                         use_container_width=True,
