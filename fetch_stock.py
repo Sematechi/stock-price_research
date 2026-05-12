@@ -256,18 +256,22 @@ def fetch_dividend(code):
             kubun_idx = ths.index("区分")
             total_idx = ths.index("合計")
 
-            # テーブルは古い順→新しい順なので実績行を全収集して最後を返す
+            # 年度セルが rowspan で結合されると実績行の cell 数が減る。
+            # 構造に依らず「区分」セルの3つ後が「合計」になるため相対位置で取得。
+            # 列順: 年度? | 区分 | 中間 | 期末 | 合計 | ...
             actuals = []
             for tr in table.find_all("tr")[1:]:
                 cells = tr.find_all(["td", "th"])
-                if len(cells) <= max(kubun_idx, total_idx):
-                    continue
-                if cells[kubun_idx].get_text(strip=True) == "実績":
-                    val = _clean_number(cells[total_idx].get_text(strip=True))
-                    if val != "-":
-                        actuals.append(val)
+                for i, cell in enumerate(cells):
+                    if cell.get_text(strip=True) == "実績":
+                        total_pos = i + 3  # 中間・期末の2列を挟んで合計
+                        if total_pos < len(cells):
+                            val = _clean_number(cells[total_pos].get_text(strip=True))
+                            if val != "-":
+                                actuals.append(val)
+                        break
             if actuals:
-                return actuals[-1]  # 最新年度の実績
+                return actuals[-1]  # テーブルは古い順→最後が最新実績
 
         return "-"
     except Exception:
