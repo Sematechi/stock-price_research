@@ -263,12 +263,11 @@ with tab_extras:
                         ths = [th.get_text(strip=True) for th in tbl.find_all("th")]
                         if "合計" not in ths:
                             continue
-                        st.write(f"テーブルヘッダー: {ths}")
-                        for tr in tbl.find_all("tr")[1:]:
+                        all_rows = tbl.find_all("tr")[1:]
+                        st.write(f"テーブルヘッダー: {ths} / 総行数: {len(all_rows)}")
+                        for tr in all_rows[-20:]:
                             cells = tr.find_all(["td","th"])
-                            row_texts = [c.get_text(strip=True) for c in cells]
-                            if "実績" in row_texts:
-                                st.write(f"実績行: {row_texts}")
+                            st.write([c.get_text(strip=True) for c in cells])
                         break
             except Exception as e:
                 st.error(f"{label}: {e}")
