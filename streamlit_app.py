@@ -255,6 +255,21 @@ with tab_extras:
                 with st.expander("合計周辺テキスト"):
                     idx2 = r.text.find("合計")
                     st.code(r.text[max(0,idx2-50):idx2+500] if idx2 >= 0 else "合計 not found")
+                # 配当ページ専用: 実績行の詳細
+                if "dividend" in url:
+                    from bs4 import BeautifulSoup as _BS
+                    soup_d = _BS(r.text, "html.parser")
+                    for tbl in soup_d.find_all("table"):
+                        ths = [th.get_text(strip=True) for th in tbl.find_all("th")]
+                        if "合計" not in ths:
+                            continue
+                        st.write(f"テーブルヘッダー: {ths}")
+                        for tr in tbl.find_all("tr")[1:]:
+                            cells = tr.find_all(["td","th"])
+                            row_texts = [c.get_text(strip=True) for c in cells]
+                            if "実績" in row_texts:
+                                st.write(f"実績行: {row_texts}")
+                        break
             except Exception as e:
                 st.error(f"{label}: {e}")
             time.sleep(2)
