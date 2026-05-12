@@ -158,6 +158,24 @@ with tab_daily:
             for code, name, data in results:
                 render_stock_card(code, name, data, fmt_date_daily)
 
+            # CSVダウンロード
+            csv_rows = []
+            for code, name, data in results:
+                if data:
+                    csv_rows.append({
+                        "銘柄コード": code,
+                        "銘柄名":     name,
+                        "日付":       fmt_date_daily(data["date"]),
+                        "始値":       data["open"],
+                        "高値":       data["high"],
+                        "安値":       data["low"],
+                        "終値":       data["close"],
+                        "出来高":     data["volume"],
+                    })
+            if csv_rows:
+                csv_bytes = pd.DataFrame(csv_rows).to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+                st.download_button("CSVでダウンロード", csv_bytes, "daily.csv", "text/csv")
+
 # ===== 過去3ヶ月タブ =====
 with tab_3month:
     st.subheader("過去3ヶ月　日足終値一覧")
@@ -179,18 +197,22 @@ with tab_3month:
             progress.empty()
 
             st.divider()
+            csv_rows_3m = []
             for code, name, rows in results:
                 st.markdown(f"**■ {code}：{name}**")
                 if rows:
                     df = pd.DataFrame(rows).rename(columns={"date": "日付", "close": "終値"})
-                    st.dataframe(
-                        df,
-                        use_container_width=True,
-                        hide_index=True,
-                    )
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    for r in rows:
+                        csv_rows_3m.append({"銘柄コード": code, "銘柄名": name, "日付": r["date"], "終値": r["close"]})
                 else:
                     st.markdown("_データ取得失敗_")
                 st.divider()
+
+            # CSVダウンロード
+            if csv_rows_3m:
+                csv_bytes_3m = pd.DataFrame(csv_rows_3m).to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+                st.download_button("CSVでダウンロード", csv_bytes_3m, "3month_close.csv", "text/csv")
 
 # ===== 月足タブ =====
 with tab_monthly:
