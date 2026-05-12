@@ -240,17 +240,21 @@ with tab_extras:
         ]:
             try:
                 r = _req.get(url, headers=HEADERS, timeout=15)
-                has_bps     = "BPS" in r.text
-                has_jisseki = "実績" in r.text
-                has_gokei   = "合計" in r.text
                 st.markdown(f"**{label}** — status: `{r.status_code}` | len: `{len(r.text)}`")
+                # BPSページ用チェック
+                import re as _re
+                bps_match = _re.search(r'BPS.{0,100}?(\d[\d,]+\.?\d*)円/株', r.text)
+                gokei_match = _re.search(r'合計.{0,200}?(\d[\d,]+\.?\d*)', r.text, _re.DOTALL)
                 st.markdown(
-                    f"- BPS あり: `{has_bps}`  "
-                    f"- 実績 あり: `{has_jisseki}`  "
-                    f"- 合計 あり: `{has_gokei}`"
+                    f"- BPS数値マッチ: `{bps_match.group(1) if bps_match else 'なし'}`  "
+                    f"- 合計数値マッチ: `{gokei_match.group(1) if gokei_match else 'なし'}`"
                 )
-                with st.expander("先頭 2000 文字"):
-                    st.code(r.text[:2000])
+                with st.expander("BPS周辺テキスト"):
+                    idx = r.text.find("BPS")
+                    st.code(r.text[max(0,idx-50):idx+300] if idx >= 0 else "BPS not found")
+                with st.expander("合計周辺テキスト"):
+                    idx2 = r.text.find("合計")
+                    st.code(r.text[max(0,idx2-50):idx2+500] if idx2 >= 0 else "合計 not found")
             except Exception as e:
                 st.error(f"{label}: {e}")
             time.sleep(2)
