@@ -221,11 +221,12 @@ def fetch_bps(code):
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        for td in soup.find_all("td"):
-            if re.search(r'BPS（[連単]）', td.get_text(strip=True)):
-                nxt = td.find_next_sibling("td")
-                if nxt:
-                    val = _clean_number(nxt.get_text(strip=True))
+        # 構造: <dt><a>BPS（連）</a></dt><dd>..936.4円/株..</dd>
+        for dt in soup.find_all("dt"):
+            if re.search(r'BPS（[連単]）', dt.get_text(strip=True)):
+                dd = dt.find_next_sibling("dd")
+                if dd:
+                    val = _clean_number(dd.get_text(strip=True))
                     if val != "-":
                         return val
 
@@ -255,6 +256,8 @@ def fetch_dividend(code):
             kubun_idx = ths.index("区分")
             total_idx = ths.index("合計")
 
+            # テーブルは古い順→新しい順なので実績行を全収集して最後を返す
+            actuals = []
             for tr in table.find_all("tr")[1:]:
                 cells = tr.find_all(["td", "th"])
                 if len(cells) <= max(kubun_idx, total_idx):
@@ -262,7 +265,9 @@ def fetch_dividend(code):
                 if cells[kubun_idx].get_text(strip=True) == "実績":
                     val = _clean_number(cells[total_idx].get_text(strip=True))
                     if val != "-":
-                        return val
+                        actuals.append(val)
+            if actuals:
+                return actuals[-1]  # 最新年度の実績
 
         return "-"
     except Exception:
