@@ -232,25 +232,25 @@ with tab_extras:
     debug_code = st.text_input("デバッグ用銘柄コード（空欄でスキップ）", value="", key="debug_code")
     if st.button("デバッグ確認", key="btn_debug") and debug_code.strip():
         import requests as _req
-        from fetch_stock import YAHOO_HEADERS
+        from fetch_stock import HEADERS
         code_d = debug_code.strip()
         for label, url in [
-            ("BPS page", f"https://finance.yahoo.co.jp/quote/{code_d}.T"),
-            ("Dividend page", f"https://finance.yahoo.co.jp/quote/{code_d}.T/dividend"),
+            ("BPS (irbank)", f"https://irbank.net/{code_d}"),
+            ("Dividend (irbank)", f"https://irbank.net/{code_d}/dividend"),
         ]:
             try:
-                r = _req.get(url, headers=YAHOO_HEADERS, timeout=15)
-                has_bps    = "BPS（実績）" in r.text
-                has_preload = "PRELOADED_STATE" in r.text
-                has_annual  = "annualCorrectedActualValue" in r.text
+                r = _req.get(url, headers=HEADERS, timeout=15)
+                has_bps     = "BPS" in r.text
+                has_jisseki = "実績" in r.text
+                has_gokei   = "合計" in r.text
                 st.markdown(f"**{label}** — status: `{r.status_code}` | len: `{len(r.text)}`")
                 st.markdown(
-                    f"- BPS（実績）あり: `{has_bps}`  "
-                    f"- PRELOADED_STATE あり: `{has_preload}`  "
-                    f"- annualCorrectedActualValue あり: `{has_annual}`"
+                    f"- BPS あり: `{has_bps}`  "
+                    f"- 実績 あり: `{has_jisseki}`  "
+                    f"- 合計 あり: `{has_gokei}`"
                 )
-                with st.expander("先頭 1000 文字"):
-                    st.code(r.text[:1000])
+                with st.expander("先頭 2000 文字"):
+                    st.code(r.text[:2000])
             except Exception as e:
                 st.error(f"{label}: {e}")
             time.sleep(2)
