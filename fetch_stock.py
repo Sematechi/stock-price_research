@@ -210,43 +210,24 @@ def _clean_number(text):
 
 def fetch_bps(code):
     """
-    Yahoo Finance Japan (https://finance.yahoo.co.jp/quote/{code}.T) から
-    BPS（1株当たり純資産・実績）を取得する。
-
-    ページ内の RSC ペイロードに "BPS（実績）" ラベルの直後に
-    "(連)936.40" / "(単)936.40" 形式で値が埋め込まれているため
-    正規表現で抽出する。
+    irbank.net (https://irbank.net/{code}) から
+    BPS（1株当たり純資産）を取得する。
+    "BPS（連）" または "BPS（単）" を含む td の直後の td から値を取得。
     取得失敗時は '-' を返す。
     """
-    url = f"https://finance.yahoo.co.jp/quote/{code}.T"
+    url = f"https://irbank.net/{code}"
     try:
-        resp = requests.get(url, headers=YAHOO_HEADERS, timeout=15)
+        resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
-        html = resp.text
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-        # "BPS（実績）" の後、500文字以内に "(連)数値" または "(単)数値" が現れる
-        match = re.search(
-            r'BPS（実績）.{0,500}?\((?:連|単)\)([\d,]+\.?\d*)',
-            html,
-            re.DOTALL,
-        )
-        if match:
-            val = _clean_number(match.group(1))
-            if val != "-":
-                return val
-
-        # フォールバック: "bps" キーを含むフラットなJSONオブジェクトを探す
-        flat_objects = re.findall(r'\{[^{}]*"bps"[^{}]*\}', html, re.IGNORECASE)
-        for obj_str in flat_objects:
-            try:
-                obj = json.loads(obj_str)
-                for k, v in obj.items():
-                    if "bps" in k.lower() and v:
-                        val = _clean_number(str(v))
-                        if val != "-":
-                            return val
-            except Exception:
-                continue
+        for td in soup.find_all("td"):
+            if re.search(r'BPS（[連単]）', td.get_text(strip=True)):
+                nxt = td.find_next_sibling("td")
+                if nxt:
+                    val = _clean_number(nxt.get_text(strip=True))
+                    if val != "-":
+                        return val
 
         return "-"
     except Exception:
@@ -255,48 +236,35 @@ def fetch_bps(code):
 
 def fetch_dividend(code):
     """
-    Yahoo Finance Japan (https://finance.yahoo.co.jp/quote/{code}.T/dividend) から
-    1株当たり年間配当金（実績・調整後）の最新値を取得する。
+    irbank.net (https://irbank.net/{code}/dividend) から
+    年間配当（実績・合計）の最新値を取得する。
 
-    ページ内の window.__PRELOADED_STATE__ に含まれる dps 配列の
-    フラットなJSONオブジェクトを個別に抽出してパースする。
-    valueType == "actual" かつ annualCorrectedActualValue が存在する
-    最新（settlementDate が最大）の値を返す。
+    テーブルの「区分」列が「実績」の最初の行の「合計」列の値を返す。
     取得失敗・データなしの場合は '-' を返す。
     """
-    url = f"https://finance.yahoo.co.jp/quote/{code}.T/dividend"
+    url = f"https://irbank.net/{code}/dividend"
     try:
-        resp = requests.get(url, headers=YAHOO_HEADERS, timeout=15)
+        resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
-        html = resp.text
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-        # dps の各エントリはネストのないフラットなJSONオブジェクト。
-        # "annualCorrectedActualValue" を含む {} ブロックを全て抽出してパースする。
-        flat_objects = re.findall(
-            r'\{[^{}]*"annualCorrectedActualValue"[^{}]*\}',
-            html,
-        )
-
-        actuals = []
-        for obj_str in flat_objects:
-            try:
-                obj = json.loads(obj_str)
-            except Exception:
+        for table in soup.find_all("table"):
+            ths = [th.get_text(strip=True) for th in table.find_all("th")]
+            if "合計" not in ths or "区分" not in ths:
                 continue
-            if (
-                obj.get("valueType") == "actual"
-                and obj.get("annualCorrectedActualValue") is not None
-                and obj.get("settlementDate")
-            ):
-                actuals.append(obj)
+            kubun_idx = ths.index("区分")
+            total_idx = ths.index("合計")
 
-        if not actuals:
-            return "-"
+            for tr in table.find_all("tr")[1:]:
+                cells = tr.find_all(["td", "th"])
+                if len(cells) <= max(kubun_idx, total_idx):
+                    continue
+                if cells[kubun_idx].get_text(strip=True) == "実績":
+                    val = _clean_number(cells[total_idx].get_text(strip=True))
+                    if val != "-":
+                        return val
 
-        # settlementDate（例: "202603"）が最大 = 直近実績
-        latest = max(actuals, key=lambda r: str(r.get("settlementDate", "")))
-        return _clean_number(str(latest["annualCorrectedActualValue"]))
-
+        return "-"
     except Exception:
         return "-"
 
@@ -305,8 +273,8 @@ def fetch_monthly_with_extras(code):
     """
     1銘柄につき以下をまとめて取得して返す:
       - 月足の四本値（kabutan.jp）
-      - BPS（Yahoo Finance Japan）
-      - 直近配当実績（Yahoo Finance Japan）
+      - BPS（irbank.net）
+      - 直近配当実績（irbank.net）
 
     Returns:
         dict with keys:
