@@ -13,8 +13,26 @@ HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    )
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;"
+        "q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+    ),
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+}
+
+# Yahoo Finance Japan 専用ヘッダー（Referer付き）
+YAHOO_HEADERS = {
+    **HEADERS,
+    "Referer": "https://finance.yahoo.co.jp/",
+    "Sec-Fetch-Site": "same-origin",
 }
 
 def is_zaraba():
@@ -193,61 +211,42 @@ def _clean_number(text):
 def fetch_bps(code):
     """
     Yahoo Finance Japan (https://finance.yahoo.co.jp/quote/{code}.T) から
-    BPS（1株当たり純資産）を取得する。
+    BPS（1株当たり純資産・実績）を取得する。
+
+    ページ内の RSC ペイロードに "BPS（実績）" ラベルの直後に
+    "(連)936.40" / "(単)936.40" 形式で値が埋め込まれているため
+    正規表現で抽出する。
     取得失敗時は '-' を返す。
     """
     url = f"https://finance.yahoo.co.jp/quote/{code}.T"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = requests.get(url, headers=YAHOO_HEADERS, timeout=15)
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+        html = resp.text
 
-        # Strategy 1: __NEXT_DATA__ の JSON から bps キーを検索
-        script_tag = soup.find("script", {"id": "__NEXT_DATA__"})
-        if script_tag and script_tag.string:
+        # "BPS（実績）" の後、500文字以内に "(連)数値" または "(単)数値" が現れる
+        match = re.search(
+            r'BPS（実績）.{0,500}?\((?:連|単)\)([\d,]+\.?\d*)',
+            html,
+            re.DOTALL,
+        )
+        if match:
+            val = _clean_number(match.group(1))
+            if val != "-":
+                return val
+
+        # フォールバック: "bps" キーを含むフラットなJSONオブジェクトを探す
+        flat_objects = re.findall(r'\{[^{}]*"bps"[^{}]*\}', html, re.IGNORECASE)
+        for obj_str in flat_objects:
             try:
-                raw = script_tag.string
-                match = re.search(r'"bps"\s*:\s*"?([\d,.\-]+)"?', raw, re.IGNORECASE)
-                if match:
-                    val = _clean_number(match.group(1))
-                    if val != "-":
-                        return val
+                obj = json.loads(obj_str)
+                for k, v in obj.items():
+                    if "bps" in k.lower() and v:
+                        val = _clean_number(str(v))
+                        if val != "-":
+                            return val
             except Exception:
-                pass
-
-        # Strategy 2: ページ内で "BPS" テキストを含む要素を探し、直後の値を取得
-        for tag in soup.find_all(string=re.compile(r'\bBPS\b')):
-            parent = tag.find_parent()
-            if not parent:
                 continue
-            # dt → 次の dd パターン
-            if parent.name == "dt":
-                dd = parent.find_next_sibling("dd")
-                if dd:
-                    val = _clean_number(dd.get_text(strip=True))
-                    if val != "-":
-                        return val
-            # th → 次の td パターン
-            if parent.name == "th":
-                td = parent.find_next_sibling("td")
-                if td:
-                    val = _clean_number(td.get_text(strip=True))
-                    if val != "-":
-                        return val
-            # span/li などの汎用パターン：兄弟要素
-            nxt = parent.find_next_sibling()
-            if nxt:
-                val = _clean_number(nxt.get_text(strip=True))
-                if val != "-":
-                    return val
-            # 親の次の兄弟
-            gp = parent.parent
-            if gp:
-                nxt2 = gp.find_next_sibling()
-                if nxt2:
-                    val = _clean_number(nxt2.get_text(strip=True))
-                    if val != "-":
-                        return val
 
         return "-"
     except Exception:
@@ -267,7 +266,7 @@ def fetch_dividend(code):
     """
     url = f"https://finance.yahoo.co.jp/quote/{code}.T/dividend"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = requests.get(url, headers=YAHOO_HEADERS, timeout=15)
         resp.raise_for_status()
         html = resp.text
 
