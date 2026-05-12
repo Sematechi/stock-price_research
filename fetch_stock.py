@@ -237,43 +237,55 @@ def fetch_bps(code):
 
 def fetch_dividend(code):
     """
-    irbank.net (https://irbank.net/{code}/dividend) から
-    年間配当（実績・合計）の最新値を取得する。
+    Yahoo Finance グローバル chart API から配当履歴を取得し、
+    直近の確定済み年間配当合計（調整後）を返す。
 
-    テーブルの「区分」列が「実績」の最初の行の「合計」列の値を返す。
+    ex-dividend date の月から 3月決算の会計年度（FY）を判定して合算。
+      month >= 4 → FY = year + 1（例: 2024年8月 → FY2025）
+      month <  4 → FY = year  （例: 2025年1月 → FY2025）
+    今日時点で終了している最新 FY（FY終了 = 翌年4月1日以降）の合計を返す。
     取得失敗・データなしの場合は '-' を返す。
     """
-    url = f"https://irbank.net/{code}/dividend"
+    import datetime
+
+    url = (
+        f"https://query2.finance.yahoo.com/v8/finance/chart/{code}.T"
+        f"?interval=3mo&range=6y&events=dividends"
+    )
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+        result = json.loads(resp.text)
 
-        for table in soup.find_all("table"):
-            ths = [th.get_text(strip=True) for th in table.find_all("th")]
-            if "合計" not in ths or "区分" not in ths:
-                continue
-            kubun_idx = ths.index("区分")
-            total_idx = ths.index("合計")
+        events = (
+            result.get("chart", {})
+                  .get("result", [{}])[0]
+                  .get("events", {})
+                  .get("dividends", {})
+        )
+        if not events:
+            return "-"
 
-            # 年度セルが rowspan で結合されると実績行の cell 数が減る。
-            # 構造に依らず「区分」セルの3つ後が「合計」になるため相対位置で取得。
-            # 列順: 年度? | 区分 | 中間 | 期末 | 合計 | ...
-            actuals = []
-            for tr in table.find_all("tr")[1:]:
-                cells = tr.find_all(["td", "th"])
-                for i, cell in enumerate(cells):
-                    if cell.get_text(strip=True) == "実績":
-                        total_pos = i + 3  # 中間・期末の2列を挟んで合計
-                        if total_pos < len(cells):
-                            val = _clean_number(cells[total_pos].get_text(strip=True))
-                            if val != "-":
-                                actuals.append(val)
-                        break
-            if actuals:
-                return actuals[-1]  # テーブルは古い順→最後が最新実績
+        today = datetime.date.today()
 
-        return "-"
+        # ex-dividend date ごとに FY を判定して合算
+        fy_totals: dict[int, float] = {}
+        for ts_str, entry in events.items():
+            ex_date = datetime.date.fromtimestamp(int(ts_str))
+            fy = ex_date.year + 1 if ex_date.month >= 4 else ex_date.year
+            fy_totals[fy] = fy_totals.get(fy, 0.0) + entry["amount"]
+
+        # 3月決算FYの終了日 = 翌年4月1日。それが今日以前なら確定済み
+        completed = {
+            fy: total for fy, total in fy_totals.items()
+            if today >= datetime.date(fy, 4, 1)
+        }
+        if not completed:
+            return "-"
+
+        latest_fy = max(completed)
+        return float(round(completed[latest_fy], 2))
+
     except Exception:
         return "-"
 
