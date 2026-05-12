@@ -11,6 +11,7 @@ from fetch_stock import (
     fetch_stock_data,
     fetch_monthly_stock_data,
     fetch_3month_close,
+    fetch_monthly_with_extras,
     fmt_date_daily,
     fmt_date_monthly,
 )
@@ -134,7 +135,9 @@ else:
 # ---------------------------------------------------------------
 # タブ切り替え
 # ---------------------------------------------------------------
-tab_daily, tab_monthly, tab_3month = st.tabs(["📅 日足(場帳)", "📆 月足", "📈 過去3ヶ月(折れ線用)"])
+tab_daily, tab_monthly, tab_3month, tab_extras = st.tabs([
+    "📅 日足(場帳)", "📆 月足", "📈 過去3ヶ月(折れ線用)", "📊 月足＋配当・BPS"
+])
 
 # ===== 日足タブ =====
 with tab_daily:
@@ -212,3 +215,53 @@ with tab_monthly:
             st.divider()
             for code, name, data in results:
                 render_stock_card(code, name, data, fmt_date_monthly)
+
+# ===== 月足＋配当・BPS タブ =====
+with tab_extras:
+    st.subheader("月足＋配当実績・BPS 一覧")
+    st.caption(
+        "銘柄リスト：月足用 Googleスプレッドシートから自動取得  "
+        "｜  データ取得元：株探（月足四本値）・Yahoo Finance Japan（BPS・配当）"
+    )
+    st.info(
+        "1銘柄あたり3回リクエスト（待機2秒×3）のため、銘柄数が多い場合は時間がかかります。",
+        icon="⏳",
+    )
+
+    if st.button("データを取得", type="primary", use_container_width=True, key="btn_extras"):
+        with st.spinner("銘柄リストを取得中..."):
+            codes = load_monthly_codes()
+
+        if codes:
+            st.caption(f"銘柄数：{len(codes)} 件")
+            progress = st.progress(0, text="取得中...")
+            rows = []
+            for i, code in enumerate(codes):
+                progress.progress(
+                    (i + 1) / len(codes),
+                    text=f"取得中... {i + 1}/{len(codes)}  ({code})",
+                )
+                row = fetch_monthly_with_extras(code)
+                rows.append(row)
+            progress.empty()
+
+            df = pd.DataFrame(rows, columns=[
+                "銘柄コード", "銘柄名", "年月",
+                "始値", "高値", "安値", "終値",
+                "配当実績", "BPS",
+            ])
+
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            # CSVダウンロードボタン
+            csv_bytes = df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+            st.download_button(
+                label="CSVでダウンロード",
+                data=csv_bytes,
+                file_name="monthly_bps_dividend.csv",
+                mime="text/csv",
+            )

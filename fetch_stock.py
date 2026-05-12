@@ -1,4 +1,6 @@
 import sys
+import re
+import json
 import requests
 from bs4 import BeautifulSoup
 import time
@@ -165,3 +167,186 @@ def fetch_3month_close(code, pages=3):
             time.sleep(1.0)
 
     return code, name, rows_all
+
+
+# ---------------------------------------------------------------
+# BPS・配当取得ユーティリティ
+# ---------------------------------------------------------------
+
+def _clean_number(text):
+    """カンマ・単位（円、%など）を除去してfloatに変換。取得不能時は '-' を返す"""
+    if not text:
+        return "-"
+    # ハイフン・ダッシュのみの文字列はデータなし
+    stripped = text.strip()
+    if stripped in ("", "-", "--", "---", "－", "ー", "N/A", "n/a"):
+        return "-"
+    cleaned = re.sub(r'[^\d.\-]', '', stripped.replace(',', ''))
+    if not cleaned or cleaned == "-":
+        return "-"
+    try:
+        return float(cleaned)
+    except ValueError:
+        return "-"
+
+
+def fetch_bps(code):
+    """
+    Yahoo Finance Japan (https://finance.yahoo.co.jp/quote/{code}.T) から
+    BPS（1株当たり純資産）を取得する。
+    取得失敗時は '-' を返す。
+    """
+    url = f"https://finance.yahoo.co.jp/quote/{code}.T"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Strategy 1: __NEXT_DATA__ の JSON から bps キーを検索
+        script_tag = soup.find("script", {"id": "__NEXT_DATA__"})
+        if script_tag and script_tag.string:
+            try:
+                raw = script_tag.string
+                match = re.search(r'"bps"\s*:\s*"?([\d,.\-]+)"?', raw, re.IGNORECASE)
+                if match:
+                    val = _clean_number(match.group(1))
+                    if val != "-":
+                        return val
+            except Exception:
+                pass
+
+        # Strategy 2: ページ内で "BPS" テキストを含む要素を探し、直後の値を取得
+        for tag in soup.find_all(string=re.compile(r'\bBPS\b')):
+            parent = tag.find_parent()
+            if not parent:
+                continue
+            # dt → 次の dd パターン
+            if parent.name == "dt":
+                dd = parent.find_next_sibling("dd")
+                if dd:
+                    val = _clean_number(dd.get_text(strip=True))
+                    if val != "-":
+                        return val
+            # th → 次の td パターン
+            if parent.name == "th":
+                td = parent.find_next_sibling("td")
+                if td:
+                    val = _clean_number(td.get_text(strip=True))
+                    if val != "-":
+                        return val
+            # span/li などの汎用パターン：兄弟要素
+            nxt = parent.find_next_sibling()
+            if nxt:
+                val = _clean_number(nxt.get_text(strip=True))
+                if val != "-":
+                    return val
+            # 親の次の兄弟
+            gp = parent.parent
+            if gp:
+                nxt2 = gp.find_next_sibling()
+                if nxt2:
+                    val = _clean_number(nxt2.get_text(strip=True))
+                    if val != "-":
+                        return val
+
+        return "-"
+    except Exception:
+        return "-"
+
+
+def fetch_dividend(code):
+    """
+    Yahoo Finance Japan (https://finance.yahoo.co.jp/quote/{code}.T/dividend) から
+    1株当たり年間配当金（実績・調整後）の最新値を取得する。
+
+    ページ内の window.__PRELOADED_STATE__ に含まれる dps 配列の
+    フラットなJSONオブジェクトを個別に抽出してパースする。
+    valueType == "actual" かつ annualCorrectedActualValue が存在する
+    最新（settlementDate が最大）の値を返す。
+    取得失敗・データなしの場合は '-' を返す。
+    """
+    url = f"https://finance.yahoo.co.jp/quote/{code}.T/dividend"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        html = resp.text
+
+        # dps の各エントリはネストのないフラットなJSONオブジェクト。
+        # "annualCorrectedActualValue" を含む {} ブロックを全て抽出してパースする。
+        flat_objects = re.findall(
+            r'\{[^{}]*"annualCorrectedActualValue"[^{}]*\}',
+            html,
+        )
+
+        actuals = []
+        for obj_str in flat_objects:
+            try:
+                obj = json.loads(obj_str)
+            except Exception:
+                continue
+            if (
+                obj.get("valueType") == "actual"
+                and obj.get("annualCorrectedActualValue") is not None
+                and obj.get("settlementDate")
+            ):
+                actuals.append(obj)
+
+        if not actuals:
+            return "-"
+
+        # settlementDate（例: "202603"）が最大 = 直近実績
+        latest = max(actuals, key=lambda r: str(r.get("settlementDate", "")))
+        return _clean_number(str(latest["annualCorrectedActualValue"]))
+
+    except Exception:
+        return "-"
+
+
+def fetch_monthly_with_extras(code):
+    """
+    1銘柄につき以下をまとめて取得して返す:
+      - 月足の四本値（kabutan.jp）
+      - BPS（Yahoo Finance Japan）
+      - 直近配当実績（Yahoo Finance Japan）
+
+    Returns:
+        dict with keys:
+          code, name, date, open, high, low, close, bps, dividend
+        取得失敗のフィールドは '-'。
+    """
+    result = {
+        "銘柄コード": code,
+        "銘柄名":     code,
+        "年月":       "-",
+        "始値":       "-",
+        "高値":       "-",
+        "安値":       "-",
+        "終値":       "-",
+        "配当実績":   "-",
+        "BPS":        "-",
+    }
+
+    # 1. 月足四本値
+    try:
+        _, name, data = fetch_monthly_stock_data(code)
+        result["銘柄名"] = name
+        if data:
+            result["年月"] = fmt_date_monthly(data["date"])
+            result["始値"] = _clean_number(data["open"])
+            result["高値"] = _clean_number(data["high"])
+            result["安値"] = _clean_number(data["low"])
+            result["終値"] = _clean_number(data["close"])
+    except Exception:
+        pass
+
+    time.sleep(2)
+
+    # 2. BPS
+    result["BPS"] = fetch_bps(code)
+    time.sleep(2)
+
+    # 3. 配当実績
+    result["配当実績"] = fetch_dividend(code)
+    time.sleep(2)
+
+    return result
