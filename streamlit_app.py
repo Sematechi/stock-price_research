@@ -228,6 +228,33 @@ with tab_extras:
         icon="⏳",
     )
 
+    # デバッグ：1銘柄だけ生HTMLを確認
+    debug_code = st.text_input("デバッグ用銘柄コード（空欄でスキップ）", value="", key="debug_code")
+    if st.button("デバッグ確認", key="btn_debug") and debug_code.strip():
+        import requests as _req
+        from fetch_stock import YAHOO_HEADERS
+        code_d = debug_code.strip()
+        for label, url in [
+            ("BPS page", f"https://finance.yahoo.co.jp/quote/{code_d}.T"),
+            ("Dividend page", f"https://finance.yahoo.co.jp/quote/{code_d}.T/dividend"),
+        ]:
+            try:
+                r = _req.get(url, headers=YAHOO_HEADERS, timeout=15)
+                has_bps    = "BPS（実績）" in r.text
+                has_preload = "PRELOADED_STATE" in r.text
+                has_annual  = "annualCorrectedActualValue" in r.text
+                st.markdown(f"**{label}** — status: `{r.status_code}` | len: `{len(r.text)}`")
+                st.markdown(
+                    f"- BPS（実績）あり: `{has_bps}`  "
+                    f"- PRELOADED_STATE あり: `{has_preload}`  "
+                    f"- annualCorrectedActualValue あり: `{has_annual}`"
+                )
+                with st.expander("先頭 1000 文字"):
+                    st.code(r.text[:1000])
+            except Exception as e:
+                st.error(f"{label}: {e}")
+            time.sleep(2)
+
     if st.button("データを取得", type="primary", use_container_width=True, key="btn_extras"):
         with st.spinner("銘柄リストを取得中..."):
             codes = load_monthly_codes()
