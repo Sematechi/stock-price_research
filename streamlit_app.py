@@ -101,7 +101,7 @@ def load_threemonth_codes():
         return []
 
 
-def render_stock_card(code, name, data, fmt_date_fn, volume_unit="株"):
+def render_stock_card(code, name, data, fmt_date_fn, volume_unit="株", error=None):
     """1銘柄のカード表示（日足・月足共通）"""
     st.markdown(f"**■ {code}：{name}**")
     if data:
@@ -115,7 +115,8 @@ def render_stock_card(code, name, data, fmt_date_fn, volume_unit="株"):
             st.write(f"終値： **{data['close']}**円")
         st.write(f"出来高： {data['volume']}{volume_unit}")
     else:
-        st.markdown("_データ取得失敗_")
+        reason = f"（{error}）" if error else ""
+        st.markdown(f"_データ取得失敗{reason}_")
     st.divider()
 
 
@@ -148,19 +149,19 @@ with tab_daily:
             progress = st.progress(0, text="取得中...")
             results = []
             for i, code in enumerate(codes):
-                c, name, data = fetch_stock_data(code, zaraba)
-                results.append((c, name, data))
+                c, name, data, err = fetch_stock_data(code, zaraba)
+                results.append((c, name, data, err))
                 progress.progress((i + 1) / len(codes), text=f"取得中... {i+1}/{len(codes)}")
                 time.sleep(0.8)
             progress.empty()
 
             st.divider()
-            for code, name, data in results:
-                render_stock_card(code, name, data, fmt_date_daily)
+            for code, name, data, err in results:
+                render_stock_card(code, name, data, fmt_date_daily, error=err)
 
             # CSVダウンロード
             csv_rows = []
-            for code, name, data in results:
+            for code, name, data, err in results:
                 if data:
                     csv_rows.append({
                         "銘柄コード": code,

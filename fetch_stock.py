@@ -82,17 +82,19 @@ def fetch_stock_data(code, use_confirmed):
         selector = "table.stock_kabuka_dwm" if use_confirmed else "table.stock_kabuka0"
         table = soup.select_one(selector)
         if not table:
-            return code, name, None
+            return code, name, None, f"テーブル未検出: {selector}"
 
         rows = table.find_all("tr")
         if len(rows) < 2:
-            return code, name, None
+            return code, name, None, f"行数不足: {len(rows)}"
 
         cells = rows[1].find_all(["th", "td"])
         data = _parse_ohlcv(cells)
-        return code, name, data
-    except Exception:
-        return code, code, None
+        if data is None:
+            return code, name, None, f"セル数不足: {len(cells)}"
+        return code, name, data, None
+    except Exception as e:
+        return code, code, None, str(e)
 
 
 def fetch_monthly_stock_data(code):
@@ -143,29 +145,60 @@ def fmt_date_monthly(date_str):
 def fetch_3month_close(code, pages=3):
     """
     過去3ヶ月分の日足終値を取得。
-    株探の日足時系列ページを page=1〜pages までスクレイピング。
+    Yahoo Finance chart API を優先（Streamlit Cloud でも動作）。
+    Yahoo Finance で見つからない場合は kabutan.jp にフォールバック。
     戻り値: (code, name, [ {"date": "20YY/MM/DD", "close": "1234"}, ... ])
             データ取得失敗時は空リスト。
     """
+    import datetime as _dt
+
+    # --- Yahoo Finance ---
+    yf_url = (
+        f"https://query2.finance.yahoo.com/v8/finance/chart/{code}.T"
+        f"?interval=1d&range=3mo"
+    )
+    try:
+        resp = requests.get(yf_url, headers=YAHOO_HEADERS, timeout=15)
+        resp.raise_for_status()
+        result = json.loads(resp.text)
+        chart_result = result.get("chart", {}).get("result", [])
+        if chart_result:
+            chart = chart_result[0]
+            timestamps = chart.get("timestamp", [])
+            closes = chart.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+            if timestamps:
+                meta = chart.get("meta", {})
+                name = meta.get("longName") or meta.get("shortName") or code
+                rows_all = []
+                for ts, cl in zip(timestamps, closes):
+                    if cl is None:
+                        continue
+                    date_str = _dt.date.fromtimestamp(ts).strftime("%Y/%m/%d")
+                    rows_all.append({
+                        "date":  date_str,
+                        "close": str(int(round(cl))),
+                    })
+                rows_all.reverse()  # 新しい順に並べる
+                return code, name, rows_all
+    except Exception:
+        pass
+
+    # --- フォールバック: kabutan.jp ---
     base_url = f"https://kabutan.jp/stock/kabuka?code={code}&ashi=day&page="
     name = code
     rows_all = []
-
     for page in range(1, pages + 1):
         url = base_url + str(page)
         try:
             resp = requests.get(url, headers=HEADERS, timeout=15)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
-
             if page == 1:
                 name = _get_name(soup, code)
-
             table = soup.select_one("table.stock_kabuka_dwm")
             if not table:
                 break
-
-            for tr in table.find_all("tr")[1:]:  # 先頭はヘッダー行
+            for tr in table.find_all("tr")[1:]:
                 cells = tr.find_all(["th", "td"])
                 if len(cells) < 5:
                     continue
@@ -177,10 +210,8 @@ def fetch_3month_close(code, pages=3):
                     "date":  fmt_date_daily(date_str),
                     "close": close_str,
                 })
-
         except Exception:
             break
-
         if page < pages:
             time.sleep(1.0)
 
